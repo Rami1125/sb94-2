@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מערכת CRM מתקדמת לניהול שכירות מכולות</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts - Rubik -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS for maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    
+    <!-- Custom Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+    
+    <style>
+        /* קובץ סגנונות כללי, יש לשמור בקובץ נפרד (style.css) */
+        :root {
+            --color-background: #E6F0E6; /* Light green-white */
+            --color-surface: #FFFFFF;
+            --color-primary: #2E8B57; /* Sea Green */
+            --color-primary-light: #4CAF50; /* Brighter Green */
+            --color-secondary: #A8D8B9; /* Lighter Green */
+            --color-accent: #2196F3; /* Bright Blue for accent */
+            --color-text-base: #2F4F4F; /* Dark Slate Gray */
+            --color-text-muted: #607D8B; /* Blue-Grey */
+            --color-border: #CFD8DC; /* Light Blue-Grey */
+            --color-danger: #D64545; /* Red (for errors/overdue) */
+            --color-warning: #FFC107; /* Amber (for warnings) */
+            --color-success: #4CAF50; /* Green (for success) */
+            --color-info: #2196F3; /* Blue (for info) */
+        }
+        
+        body {
+            font-family: 'Rubik', sans-serif;
+            background-color: var(--color-background);
+            color: var(--color-text-base);
+        }
+        
+        .card {
+            background-color: var(--color-surface);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background-color: var(--color-primary);
+            color: white;
+            box-shadow: 0 4px 6px rgba(46, 139, 87, 0.2);
+        }
+
+        .btn-primary:hover {
+            background-color: #26794b;
+            box-shadow: 0 6px 10px rgba(46, 139, 87, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background-color: var(--color-secondary);
+            color: var(--color-text-base);
+            border: 1px solid var(--color-border);
+        }
+
+        .btn-secondary:hover {
+            background-color: #9ac2a9;
+            transform: translateY(-2px);
+        }
+        
+        .input-field {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background-color: var(--color-background);
+            color: var(--color-text-base);
+            transition: all 0.3s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(46, 139, 87, 0.1);
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none; /* Default to hidden */
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .modal-content {
+            background-color: var(--color-surface);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 24px;
+            max-height: 90vh;
+            overflow-y: auto;
+            transform: translateY(20px);
+            animation: slideUp 0.3s ease-out forwards;
+        }
+        
+        .modal-overlay.open {
+            display: flex;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* Container History Styling */
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 1rem;
+            border-bottom: 1px solid var(--color-border);
+            position: relative;
+        }
+        .history-item:last-child {
+            border-bottom: none;
+        }
+        .history-item-icon {
+            font-size: 2rem;
+            color: var(--color-primary);
+        }
+        .history-item-content {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body class="text-base">
+
+    <!-- Loader Overlay -->
+    <div id="loader-overlay" class="fixed inset-0 bg-gray-500 bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-[1000] opacity-0 pointer-events-none transition-opacity duration-300">
+        <div class="w-20 h-20 border-6 border-t-6 border-gray-200 border-t-[var(--color-primary)] rounded-full animate-spin"></div>
+    </div>
+
+    <!-- Message Box (Alerts) -->
+    <div id="message-box" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 p-4 rounded-lg shadow-lg z-50 text-white transition-all duration-300 ease-in-out flex items-center hidden">
+        <i id="message-icon" class="mr-2"></i>
+        <span id="message-text"></span>
+    </div>
+
+    <!-- Customer Analysis Modal -->
+    <div id="customer-analysis-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-4xl max-h-[90vh] flex flex-col p-6">
+            <div class="flex items-center justify-between pb-5 border-b border-[var(--color-border)] mb-4">
+                <h2 class="text-2xl font-bold text-[var(--color-primary)]">ניתוח לקוח: <span id="customer-name-display"></span></h2>
+                <button onclick="closeModal('customer-analysis-modal')" class="text-3xl text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors">&times;</button>
+            </div>
+            <div id="customer-details-content" class="flex-grow overflow-y-auto">
+                <!-- Customer info and history will be dynamically loaded here -->
+                <div class="card p-4 mb-6">
+                    <h3 class="text-xl font-bold mb-4">פרטים</h3>
+                    <p><strong>שם:</strong> <span id="customer-details-name"></span></p>
+                    <p><strong>טלפון:</strong> <span id="customer-details-phone"></span></p>
+                    <p><strong>כתובת אחרונה:</strong> <span id="customer-details-address"></span></p>
+                    <p><strong>סה"כ הזמנות:</strong> <span id="customer-details-total-orders"></span></p>
+                </div>
+                
+                <div class="card p-4">
+                    <h3 class="text-xl font-bold mb-4">היסטוריית הזמנות</h3>
+                    <div id="customer-history-list" class="space-y-4">
+                        <!-- History items will be populated here -->
+                    </div>
+                    <div id="no-customer-history-message" class="text-center text-gray-500 mt-6 hidden">אין היסטוריית הזמנות להצגה.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Order Modal (New and improved form) -->
+    <div id="order-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-3xl max-h-[90vh] flex flex-col p-6 rounded-2xl shadow-2xl">
+            <div class="flex items-center justify-between pb-5 border-b border-gray-200 mb-6">
+                <h2 id="modal-title" class="text-3xl font-bold text-gray-800">הוסף הזמנה חדשה</h2>
+                <button onclick="closeModal('order-modal')" class="text-4xl text-gray-400 hover:text-red-500 transition-colors">&times;</button>
+            </div>
+            
+            <form id="order-form" class="space-y-6 overflow-y-auto">
+                <!-- Customer Identification -->
+                <div class="card p-6">
+                    <h3 class="text-xl font-bold mb-4">פרטי לקוח</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="customer-phone" class="form-label">טלפון לקוח*</label>
+                            <div class="relative flex items-center">
+                                <input type="tel" id="customer-phone" name="customerPhone" class="form-input" required oninput="validatePhone()" onblur="checkCustomerAndShowHistory()">
+                                <i id="phone-status-icon" class="fas text-xl absolute right-4 transition-colors duration-300"></i>
+                            </div>
+                            <p id="phone-validation-message" class="text-sm mt-1"></p>
+                        </div>
+                        <div>
+                            <label for="customer-name" class="form-label">שם לקוח*</label>
+                            <input type="text" id="customer-name" name="customerName" class="form-input" required>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label for="customer-address" class="form-label">כתובת אחרונה*</label>
+                        <input type="text" id="customer-address" name="customerAddress" class="form-input" required>
+                    </div>
+                    <div id="customer-history-summary" class="hidden mt-4 bg-blue-50 p-4 rounded-lg border border-blue-200 text-blue-800">
+                        <i class="fas fa-history ml-2"></i>
+                        <span id="customer-history-text"></span>
+                        <a href="#" id="view-history-link" class="text-blue-600 underline font-bold mr-2" onclick="showCustomerHistoryModal()">הצג הכל</a>
+                    </div>
+                </div>
+
+                <!-- Order Details -->
+                <div class="card p-6">
+                    <h3 class="text-xl font-bold mb-4">פרטי הזמנה</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="order-type" class="form-label">סוג פעולה*</label>
+                            <select id="order-type" name="orderType" class="form-input" required onchange="handleOrderTypeChange()">
+                                <option value="הורדה">הורדה</option>
+                                <option value="העלאה">העלאה</option>
+                                <option value="החלפה">החלפה</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="order-date" class="form-label">תאריך הזמנה*</label>
+                            <input type="date" id="order-date" name="orderDate" class="form-input" required>
+                        </div>
+                    </div>
+
+                    <div id="container-fields" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div id="container-taken-div">
+                            <label for="container-taken" class="form-label">מספר מכולה ירדה</label>
+                            <input type="text" id="container-taken" name="containerTaken" class="form-input">
+                        </div>
+                        <div id="container-brought-div" class="hidden">
+                            <label for="container-brought" class="form-label">מספר מכולה עלתה</label>
+                            <input type="text" id="container-brought" name="containerBrought" class="form-input">
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <label for="remarks" class="form-label">הערות</label>
+                        <textarea id="remarks" name="remarks" rows="3" class="form-input"></textarea>
+                    </div>
+                </div>
+                
+                <div class="flex justify-center gap-4 pt-4 border-t border-gray-200">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('order-modal')">ביטול</button>
+                    <button type="submit" class="btn btn-primary" id="submit-order-btn">שמור הזמנה</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Floating Scroll to Top Button -->
+    <button onclick="scrollToTop()" id="scroll-to-top-btn" title="חזור למעלה">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
+    <!-- Main Page Content -->
+    <div class="flex flex-col min-h-screen">
+        <!-- Header, Sidebar, Main content sections from the original file... -->
+        <!-- You would place your existing dashboard layout here, e.g., -->
+        <header class="bg-white shadow-sm sticky top-0 z-50">...</header>
+        <div class="flex flex-1">
+            <aside class="w-64 bg-gray-50 border-r border-gray-200 p-4">...</aside>
+            <main class="flex-1 p-6">
+                <!-- Dashboard content as in the original file -->
+                <section id="dashboard" class="mb-8">
+                    <h2 class="text-3xl font-bold mb-6 text-gray-800">לוח מחוונים 📈</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <!-- KPI Cards -->
+                        <div class="card p-6 text-center">
+                            <p class="text-sm font-medium text-gray-500">סה"כ הזמנות</p>
+                            <p id="total-orders-kpi" class="text-4xl font-extrabold text-gray-800 mt-2">0</p>
+                        </div>
+                        <div class="card p-6 text-center">
+                            <p class="text-sm font-medium text-gray-500">הזמנות פתוחות</p>
+                            <p id="open-orders-kpi" class="text-4xl font-extrabold text-red-500 mt-2">0</p>
+                        </div>
+                        <div class="card p-6 text-center">
+                            <p class="text-sm font-medium text-gray-500">הזמנות בתהליך</p>
+                            <p id="in-progress-orders-kpi" class="text-4xl font-extrabold text-orange-500 mt-2">0</p>
+                        </div>
+                        <div class="card p-6 text-center">
+                            <p class="text-sm font-medium text-gray-500">הזמנות סגורות</p>
+                            <p id="closed-orders-kpi" class="text-4xl font-extrabold text-green-500 mt-2">0</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="orders-list" class="mb-8">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-3xl font-bold text-gray-800">רשימת הזמנות 📋</h2>
+                        <button onclick="openModal('order-modal')" class="btn btn-primary flex items-center gap-2">
+                            <i class="fas fa-plus"></i>
+                            <span>הוסף הזמנה</span>
+                        </button>
+                    </div>
+                    <!-- Filter and Search controls -->
+                    <div class="bg-white p-6 rounded-xl shadow-md flex flex-wrap items-center gap-4 mb-6">
+                        <!-- Search Input -->
+                        <div class="flex-1">
+                            <label for="search-input" class="sr-only">חיפוש</label>
+                            <div class="relative">
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-gray-400">
+                                    <i class="fas fa-search"></i>
+                                </div>
+                                <input type="text" id="search-input" placeholder="חיפוש לפי לקוח, כתובת..." class="form-input pr-10">
+                            </div>
+                        </div>
+                        <!-- Status Filter -->
+                        <div class="w-full sm:w-auto">
+                            <label for="filter-status-select" class="sr-only">סינון סטטוס</label>
+                            <select id="filter-status-select" class="form-input">
+                                <option value="all">כל הסטטוסים</option>
+                                <option value="פתוח">פתוח</option>
+                                <option value="בתהליך">בתהליך</option>
+                                <option value="דחוף">דחוף</option>
+                                <option value="סגור">סגור</option>
+                            </select>
+                        </div>
+                         <!-- Agent Filter -->
+                         <div class="w-full sm:w-auto">
+                            <label for="filter-agent-select" class="sr-only">סינון סוכן</label>
+                            <select id="filter-agent-select" class="form-input">
+                                <option value="all">כל הסוכנים</option>
+                                <!-- Agents populated by JS -->
+                            </select>
+                        </div>
+                         <!-- Action Type Filter -->
+                         <div class="w-full sm:w-auto">
+                            <label for="filter-action-type-select" class="sr-only">סינון סוג פעולה</label>
+                            <select id="filter-action-type-select" class="form-input">
+                                <option value="all">כל הפעולות</option>
+                                <option value="הורדה">הורדה</option>
+                                <option value="העלאה">העלאה</option>
+                                <option value="החלפה">החלפה</option>
+                            </select>
+                        </div>
+                        <!-- Show Closed Checkbox -->
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="show-closed-orders" class="rounded text-green-500 focus:ring-green-500">
+                            <label for="show-closed-orders" class="text-sm text-gray-600 select-none">הצג סגורות</label>
+                        </div>
+                        <!-- Reset Button -->
+                        <button onclick="resetTableFilters()" class="btn bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors">
+                            <i class="fas fa-sync"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Orders Table -->
+                    <div class="overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
+                        <table id="orders-table" class="min-w-full text-right bg-white">
+                            <thead class="bg-gray-100">
+                                <tr class="border-b">
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 0)">מס' מסמך <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 1)">שם לקוח <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 2)">כתובת <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 3)">תאריך יצירה <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 4)">סוג פעולה <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 5)">סטטוס <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('orders-table', 6)">סוכן מטפל <i class="fas fa-sort text-xs"></i></th>
+                                    <th class="p-3">פעולות</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-table-body">
+                                <!-- Orders will be populated here by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="no-orders-message" class="text-center text-gray-500 mt-6 text-lg hidden">אין הזמנות להצגה בסינון הנוכחי.</div>
+                </section>
+                
+                <section id="customer-analysis" class="mb-8">
+                    <h2 class="text-3xl font-bold mb-6 text-gray-800">ניתוח לקוחות 📊</h2>
+                    <div class="overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
+                        <table id="customer-analysis-table" class="min-w-full text-right bg-white">
+                            <thead class="bg-gray-100">
+                                <tr class="border-b">
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('customer-analysis-table', 0)">שם לקוח <i class="fas fa-sort"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('customer-analysis-table', 1)">כתובת אחרונה <i class="fas fa-sort"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('customer-analysis-table', 2)">טלפון <i class="fas fa-sort"></i></th>
+                                    <th class="p-3 cursor-pointer" onclick="sortTable('customer-analysis-table', 3)">סה"כ הזמנות <i class="fas fa-sort"></i></th>
+                                    <th class="p-3">פעולות</th>
+                                </tr>
+                            </thead>
+                            <tbody id="customer-analysis-table-body">
+                                <!-- Customer summaries will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="no-customer-analysis" class="text-center text-gray-500 mt-6 hidden text-lg">אין לקוחות להצגה בסינון הנוכחי.</div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<!-- Custom JavaScript -->
+<script src="script.js"></script>
+
+</body>
+</html>
