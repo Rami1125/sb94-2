@@ -1,320 +1,423 @@
-// URL of your Google Apps Script for Orders
-const ORDERS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxiS3wXwXCyh8xM1EdTiwXy0T-UyBRQgfrnRRis531lTxmgtJIGawfsPeetX5nVJW3V/exec';
+// קובץ JavaScript להתממשקות עם Google Apps Script API
 
-// URL of your Google Apps Script for Delivery Notes
-// This should be a separate script or a different sheet tab handled by the same script
-const DELIVERY_NOTES_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzP0wjHzQrvo0pzSigKuJX25xvqIck8IQGXildOp-BEOqaT5Yvf9odw4_OeP4y9dyEzrQ/exec';
+// ⚠️ עדכן את ה-URL הזה עם ה-URL האמיתי של הפריסה החדשה של יישום האינטרנט של Google Apps Script.
+// זהו ה-URL שקיבלת לאחר הפריסה האחרונה.
+const SCRIPT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwx_RT2pXdUyirOrCc-EiNx-oGO5zRwYoOWslFe9KVxQW-cpWlbF-WxOtsxcNqmFdBpCw/exec';
 
-let allDocuments = []; // Stores all documents (orders and delivery notes)
-let customers = []; // Stores unique customer names for autofill
+// URL של סקריפט Apps Script נפרד לרישום הודעות WhatsApp (⚠️ החלף ב-ID האמיתי של הסקריפט שלך)
+// תצטרך פרויקט Apps Script נפרד שפרוס כיישום אינטרנט במיוחד לרישום הודעות WhatsApp.
+const WHATSAPP_LOG_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx_Q8-t3tT3qG6-E9bF0-R9-j0t4t6s-x3t3y/exec';
 
-// --- Utility Functions ---
-function showLoader() { document.getElementById('loader-overlay').classList.remove('opacity-0', 'pointer-events-none'); }
-function hideLoader() { document.getElementById('loader-overlay').classList.add('opacity-0', 'pointer-events-none'); }
+// משתני מצב
+let allOrders = [];
+let filteredOrders = [];
+let allDeliveryNotes = [];
+let allAgents = [];
 
-function openModal(id) { document.getElementById(id).classList.add('active'); }
-function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+// אובייקטי Chart.js
+let totalOrdersChart;
+let newVsClosedChart;
+let actionTypeChart;
+let statusPieChart;
 
-function showAlert(message, type = 'info') {
-    const container = document.getElementById('alert-container');
-    const alertItem = document.createElement('div');
-    let bgColor, icon, textColor, borderColor;
-    switch(type) {
-        case 'success': bgColor = 'bg-green-50'; borderColor = 'border-green-500'; textColor = 'text-green-700'; icon = 'fa-check-circle'; break;
-        case 'error': bgColor = 'bg-red-50'; borderColor = 'border-red-500'; textColor = 'text-red-700'; icon = 'fa-times-circle'; break;
-        case 'warning': bgColor = 'bg-yellow-50'; borderColor = 'border-yellow-500'; textColor = 'text-yellow-700'; icon = 'fa-exclamation-triangle'; break;
-        default: bgColor = 'bg-blue-50'; borderColor = 'border-blue-500'; textColor = 'text-blue-700'; icon = 'fa-info-circle'; break;
-    }
-    alertItem.className = `p-4 rounded-lg border-l-4 shadow-md flex items-center gap-3 transform translate-x-full opacity-0 transition-all duration-500 ease-out ${bgColor} ${borderColor} ${textColor}`;
-    alertItem.innerHTML = `<i class="fas ${icon}"></i><p>${message}</p>`;
-    container.prepend(alertItem);
-    
-    setTimeout(() => {
-        alertItem.style.transform = 'translateX(0)';
-        alertItem.style.opacity = '1';
-    }, 100);
+// --- פונקציות טעינה וטיפול בנתונים ---
 
-    setTimeout(() => {
-        alertItem.style.transform = 'translateX(100%)';
-        alertItem.style.opacity = '0';
-        setTimeout(() => alertItem.remove(), 500);
-    }, 5000);
-}
-
-// --- API Communication Function with Exponential Backoff ---
-async function fetchData(action, params = {}, retries = 0, scriptUrl = ORDERS_SCRIPT_URL) {
+/**
+ * מפעיל את טעינת הנתונים הראשונית ומאתחל את האפליקציה.
+ */
+async function loadAllData() {
     showLoader();
-    const urlParams = new URLSearchParams({ action, ...params });
-    const url = `${scriptUrl}?${urlParams.toString()}`;
-    console.log(`[fetchData] Request URL: ${url}`);
     try {
-        const response = await fetch(url);
-        const data = await response.json();
-        if (!response.ok) {
-            const errorMessage = data.message || `שגיאת שרת HTTP: ${response.status}`;
-            showAlert(errorMessage, 'error');
-            return { success: false, message: errorMessage };
-        }
-        if (!data.success && data.message && data.message.includes('Service invoked too many times')) {
-            const delay = Math.pow(2, retries) * 1000;
-            if (retries < 5) {
-                console.warn(`[fetchData] Retrying in ${delay}ms... (Attempt ${retries + 1})`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-                return fetchData(action, params, retries + 1, scriptUrl);
-            } else {
-                showAlert('השרת עמוס מדי, אנא נסה שוב מאוחר יותר.', 'error');
-                return { success: false, message: 'Service too busy' };
-            }
-        } else if (!data.success) {
-            showAlert(data.message || 'פעולה נכשלה בשרת.', 'error');
-            return data;
-        }
-        return data;
+        const ordersData = await fetchData({ action: 'readData', sheet: 'Orders' });
+        allOrders = ordersData;
+        
+        const deliveryNotesData = await fetchData({ action: 'readData', sheet: 'DeliveryNotes' });
+        allDeliveryNotes = deliveryNotesData;
+
+        // שילוב נתונים לטבלת הלקוחות וקיזוז כפילויות
+        const customerData = combineAndFilterCustomers(allOrders, allDeliveryNotes);
+        renderCustomerAnalysisTable(customerData);
+
+        // טעינת רשימת סוכנים
+        allAgents = getUniqueAgents();
+
+        // עדכון ה-UI עם הנתונים החדשים
+        updateDashboardAndTables();
+
     } catch (error) {
-        showAlert('שגיאת תקשורת: לא ניתן להתחבר לשרת.', 'error');
-        return { success: false, message: error.message };
+        console.error('Failed to load data from API:', error);
+        showMessageBox('שגיאה בטעינת הנתונים מהשרת. אנא נסה שנית מאוחר יותר.', 'error');
     } finally {
         hideLoader();
     }
 }
 
-// --- Data Fetching and UI Rendering ---
-async function fetchDocuments() {
-    // This is a placeholder. In a real-world scenario, you would fetch from two different endpoints
-    // or from a single endpoint that returns both types of documents.
-    // For this example, we will simulate this by fetching from a single URL and assuming
-    // the data contains both "הזמנה" and "תעודת משלוח".
-    const ordersData = await fetchData('getOrders');
-    const deliveryNotesData = await fetchData('getDeliveryNotes', {}, 0, DELIVERY_NOTES_SCRIPT_URL);
+/**
+ * שליפת נתונים מה-Google Apps Script API באמצעות fetch.
+ * @param {object} params פרמטרים לבקשה.
+ * @returns {Promise<any>} הנתונים שהתקבלו כתגובה.
+ */
+async function fetchData(params) {
+    const url = new URL(SCRIPT_WEB_APP_URL);
+    // הוספת פרמטרים לבקשת GET
+    Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
 
-    let allDocs = [];
-    if (ordersData.success && Array.isArray(ordersData.data)) {
-        allDocs = allDocs.concat(ordersData.data.map(d => ({ ...d, type: 'הזמנה' })));
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
     }
-    if (deliveryNotesData.success && Array.isArray(deliveryNotesData.data)) {
-        allDocs = allDocs.concat(deliveryNotesData.data.map(d => ({ ...d, type: 'תעודת משלוח' })));
-    }
-
-    allDocuments = allDocs;
-    updateCustomerDataList();
-    renderDocumentsTable(allDocuments);
+    return await response.json();
 }
 
-function updateCustomerDataList() {
-    const uniqueCustomers = new Set();
-    allDocuments.forEach(doc => {
-        if (doc['שם לקוח']) {
-            uniqueCustomers.add(doc['שם לקוח']);
+/**
+ * שליחת נתונים ל-Google Apps Script API באמצעות בקשת POST.
+ * @param {object} data הנתונים לשליחה.
+ * @returns {Promise<any>} התגובה מהשרת.
+ */
+async function postData(data) {
+    const response = await fetch(SCRIPT_WEB_APP_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return await response.json();
+}
+
+// --- פונקציות עיבוד נתונים והצגה ---
+
+/**
+ * מאחד את רשימות ההזמנות וההערות כדי ליצור רשימת לקוחות ייחודיים.
+ * @param {Array<Object>} orders רשימת ההזמנות.
+ * @param {Array<Object>} deliveryNotes רשימת הערות המסירה.
+ * @returns {Array<Object>} מערך של אובייקטים של לקוחות ייחודיים.
+ */
+function combineAndFilterCustomers(orders, deliveryNotes) {
+    const allEntries = [...orders, ...deliveryNotes];
+    const customersMap = new Map();
+
+    allEntries.forEach(entry => {
+        const customerPhone = entry['טלפון'].trim();
+        if (customersMap.has(customerPhone)) {
+            // עדכון נתוני הלקוח הקיים
+            const existingCustomer = customersMap.get(customerPhone);
+            existingCustomer.totalOrders++;
+            existingCustomer.lastAddress = entry['כתובת'].trim();
+        } else {
+            // יצירת אובייקט לקוח חדש
+            customersMap.set(customerPhone, {
+                name: entry['שם לקוח'].trim(),
+                lastAddress: entry['כתובת'].trim(),
+                phone: customerPhone,
+                totalOrders: 1
+            });
         }
     });
 
-    const datalist = document.getElementById('customer-list');
-    datalist.innerHTML = '';
-    uniqueCustomers.forEach(customer => {
-        const option = document.createElement('option');
-        option.value = customer;
-        datalist.appendChild(option);
-    });
-
-    customers = Array.from(uniqueCustomers).map(name => {
-        const doc = allDocuments.find(d => d['שם לקוח'] === name);
-        return {
-            name: doc['שם לקוח'],
-            address: doc['כתובת'],
-            phone: doc['טלפון לקוח']
-        };
-    });
+    return Array.from(customersMap.values());
 }
 
-function renderDocumentsTable(documents) {
-    const tableBody = document.getElementById('documents-table-body');
+/**
+ * יוצר ומציג את טבלת ניתוח הלקוחות.
+ * @param {Array<Object>} customerData מערך נתוני הלקוחות.
+ */
+function renderCustomerAnalysisTable(customerData) {
+    const tableBody = document.getElementById('customer-analysis-table-body');
+    if (!tableBody) return;
     tableBody.innerHTML = '';
-
-    if (documents.length === 0) {
-        document.getElementById('no-documents').classList.remove('hidden');
+    
+    if (customerData.length === 0) {
+        document.getElementById('no-customer-analysis').classList.remove('hidden');
         return;
     }
-    document.getElementById('no-documents').classList.add('hidden');
+    document.getElementById('no-customer-analysis').classList.add('hidden');
 
-    documents.forEach(doc => {
+    customerData.forEach(customer => {
         const row = document.createElement('tr');
-        row.className = 'hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors';
-        
-        let statusColorClass = 'text-[var(--color-text-base)]';
-        let actionsHtml = '';
-
-        if (doc.type === 'הזמנה' && doc['סטטוס'] !== 'הושלם') {
-            statusColorClass = 'text-[var(--color-warning)]';
-            actionsHtml = `<button onclick="convertToDeliveryNote('${doc['מספר מסמך']}')" class="bg-[var(--color-accent)] text-white px-3 py-1 rounded-full text-xs hover:bg-[var(--color-info)] transition-colors">
-                            הפוך לתעודת משלוח
-                           </button>`;
-        } else if (doc.type === 'תעודת משלוח') {
-            statusColorClass = 'text-[var(--color-success)]';
-        }
-
+        row.className = 'border-b hover:bg-gray-50 dark:hover:bg-gray-700';
         row.innerHTML = `
-            <td class="p-3 whitespace-nowrap">${doc['מספר מסמך']}</td>
-            <td class="p-3 whitespace-nowrap">${doc.type}</td>
-            <td class="p-3 whitespace-nowrap">${doc['תאריך']}</td>
-            <td class="p-3 whitespace-nowrap">${doc['שם לקוח']}</td>
-            <td class="p-3 whitespace-nowrap">${doc['כתובת']}</td>
-            <td class="p-3 whitespace-nowrap"><span class="${statusColorClass}">${doc['סטטוס']}</span></td>
-            <td class="p-3">
-                <div class="flex gap-2">
-                    ${actionsHtml}
-                </div>
+            <td class="p-3 whitespace-nowrap">${customer.name}</td>
+            <td class="p-3 text-sm text-gray-500">${customer.lastAddress}</td>
+            <td class="p-3 whitespace-nowrap text-sm text-gray-500">${customer.phone}</td>
+            <td class="p-3 text-sm">${customer.totalOrders}</td>
+            <td class="p-3 flex justify-center">
+                <button onclick="handleCustomerAction('${customer.phone}')" class="text-white bg-blue-500 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 font-medium rounded-lg text-xs px-2.5 py-1.5 transition-colors duration-200">
+                    פרטים
+                </button>
             </td>
         `;
         tableBody.appendChild(row);
     });
 }
 
-// --- New Document Handling (Modal and Form) ---
-const docForm = document.getElementById('document-form');
-const docNumberInput = document.getElementById('doc-number-input');
-const docTypeSelect = document.getElementById('doc-type-select');
-const customerNameInput = document.getElementById('customer-name-input');
-const customerAddressInput = document.getElementById('customer-address-input');
-const customerPhoneInput = document.getElementById('customer-phone-input');
-const existingCustomerCheckbox = document.getElementById('existing-customer-checkbox');
-
-document.getElementById('add-order-btn').addEventListener('click', () => {
-    openModal('document-modal');
-    // Set default values for a new order
-    docNumberInput.value = generateDocNumber('הזמנה');
-    docTypeSelect.value = 'הזמנה';
-    document.getElementById('doc-date-input').value = new Date().toISOString().slice(0, 10);
-    // Clear other fields for a new document
-    customerNameInput.value = '';
-    customerAddressInput.value = '';
-    customerPhoneInput.value = '';
-    existingCustomerCheckbox.checked = false;
-    document.getElementById('modal-title').textContent = 'יצירת הזמנה חדשה';
-});
-
-docTypeSelect.addEventListener('change', () => {
-    docNumberInput.value = generateDocNumber(docTypeSelect.value);
-});
-
-existingCustomerCheckbox.addEventListener('change', (e) => {
-    if (e.target.checked) {
-        customerNameInput.addEventListener('input', autofillCustomerData);
-    } else {
-        customerNameInput.removeEventListener('input', autofillCustomerData);
-    }
-});
-
-function autofillCustomerData() {
-    const customer = customers.find(c => c.name === customerNameInput.value);
-    if (customer) {
-        customerAddressInput.value = customer.address;
-        customerPhoneInput.value = customer.phone;
+/**
+ * מציג לוחית טעינה (Loader).
+ */
+function showLoader() {
+    const loader = document.getElementById('loader-overlay');
+    if (loader) {
+        loader.classList.remove('hidden');
     }
 }
 
-function generateDocNumber(type) {
-    // In a real-world scenario, the backend would generate this number.
-    // For this client-side example, we'll use a simple simulation.
-    const prefix = type === 'הזמנה' ? '620' : '671';
-    const lastDoc = allDocuments.filter(doc => doc.type === type).pop();
-    const lastNum = lastDoc ? parseInt(lastDoc['מספר מסמך'].replace(prefix, '')) : 0;
-    const newNum = lastNum + 1;
-    return `${prefix}${String(newNum).padStart(4, '0')}`;
+/**
+ * מסתיר את לוחית הטעינה.
+ */
+function hideLoader() {
+    const loader = document.getElementById('loader-overlay');
+    if (loader) {
+        loader.classList.add('hidden');
+    }
 }
 
-docForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(docForm);
-    const docData = Object.fromEntries(formData.entries());
+/**
+ * מציג תיבת הודעה מותאמת אישית (במקום alert).
+ * @param {string} message תוכן ההודעה.
+ * @param {string} type סוג ההודעה ('success', 'error', 'info').
+ */
+function showMessageBox(message, type = 'info') {
+    const messageBox = document.getElementById('message-box');
+    const messageText = document.getElementById('message-text');
+    const messageIcon = document.getElementById('message-icon');
 
-    docData['מספר מסמך'] = docNumberInput.value;
-    docData['סוג מסמך'] = docTypeSelect.value;
+    if (!messageBox || !messageText || !messageIcon) return;
+
+    // הגדרת סגנונות ואיקונים בהתאם לסוג ההודעה
+    messageBox.className = 'fixed bottom-5 left-1/2 transform -translate-x-1/2 p-4 rounded-lg shadow-lg z-50 text-white transition-all duration-300 ease-in-out flex items-center hidden';
+    messageIcon.className = '';
     
-    // Default status if not provided
-    docData['סטטוס'] = docData['סטטוס'] || 'חדש';
-    
-    // Add customer data if new customer
-    if (!customers.find(c => c.name === docData['customer-name'])) {
-        customers.push({
-            name: docData['customer-name'],
-            address: docData['customer-address'],
-            phone: docData['customer-phone']
-        });
-        updateCustomerDataList();
+    let iconClass = '';
+    let bgColor = '';
+
+    switch(type) {
+        case 'success':
+            iconClass = 'fas fa-check-circle';
+            bgColor = 'bg-green-500';
+            break;
+        case 'error':
+            iconClass = 'fas fa-times-circle';
+            bgColor = 'bg-red-500';
+            break;
+        case 'info':
+        default:
+            iconClass = 'fas fa-info-circle';
+            bgColor = 'bg-blue-500';
+            break;
     }
     
-    let result;
-    if (docData['סוג מסמך'] === 'הזמנה') {
-        result = await fetchData('addOrder', docData);
-    } else {
-        result = await fetchData('addDeliveryNote', docData, 0, DELIVERY_NOTES_SCRIPT_URL);
-    }
+    messageBox.classList.add(bgColor);
+    messageBox.classList.remove('hidden');
+    messageIcon.className = `${iconClass} mr-2`;
+    messageText.textContent = message;
 
-    if (result.success) {
-        showAlert('המסמך נשמר בהצלחה!', 'success');
-        closeModal('document-modal');
-        fetchDocuments(); // Refresh the table
-    } else {
-        showAlert('שגיאה בשמירת המסמך.', 'error');
-    }
-});
+    // הסתרת התיבה לאחר 5 שניות
+    setTimeout(() => {
+        messageBox.classList.add('hidden');
+    }, 5000);
+}
 
-async function convertToDeliveryNote(orderNumber) {
-    const orderToConvert = allDocuments.find(doc => doc['מספר מסמך'] === orderNumber);
-    if (!orderToConvert) {
-        showAlert('הזמנה לא נמצאה.', 'error');
-        return;
-    }
 
-    showLoader();
-    // 1. Get a new delivery note number from the server or simulate
-    const newDeliveryNoteNumber = generateDocNumber('תעודת משלוח');
-    
-    // 2. Create the new delivery note document data
-    const deliveryNoteData = {
-        'מספר מסמך': newDeliveryNoteNumber,
-        'סוג מסמך': 'תעודת משלוח',
-        'תאריך': orderToConvert['תאריך'],
-        'שם לקוח': orderToConvert['שם לקוח'],
-        'כתובת': orderToConvert['כתובת'],
-        'טלפון לקוח': orderToConvert['טלפון לקוח'],
-        'סטטוס': 'הושלם',
-        'מספר הזמנה מקושר': orderNumber
-    };
+/**
+ * מפעיל את פונקציות הסינון ומעדכן את הטבלה.
+ */
+function filterTable() {
+    const searchTerm = document.getElementById('search-input').value.toLowerCase();
+    const statusFilter = document.getElementById('filter-status-select').value;
+    const agentFilter = document.getElementById('filter-agent-select').value;
+    const actionTypeFilter = document.getElementById('filter-action-type-select').value;
+    const showClosed = document.getElementById('show-closed-orders').checked;
 
-    // 3. Save the new delivery note to its spreadsheet
-    const deliveryNoteResult = await fetchData('addDeliveryNote', deliveryNoteData, 0, DELIVERY_NOTES_SCRIPT_URL);
+    filteredOrders = allOrders.filter(order => {
+        const orderStatus = order['סטטוס'];
+        const orderActionType = order['סוג פעולה'];
+        const orderAgent = order['סוכן מטפל'];
+        const orderText = Object.values(order).join(' ').toLowerCase();
 
-    if (deliveryNoteResult.success) {
-        // 4. Update the original order's status to 'Completed' in its spreadsheet
-        const updateOrderResult = await fetchData('updateOrderStatus', {
-            'מספר מסמך': orderNumber,
-            'סטטוס': 'הושלם'
-        });
-
-        if (updateOrderResult.success) {
-            showAlert(`הזמנה ${orderNumber} הומרה בהצלחה לתעודת משלוח ${newDeliveryNoteNumber}.`, 'success');
-            fetchDocuments(); // Refresh data to show changes
-        } else {
-            showAlert('המרת ההזמנה לתעודת משלוח נכשלה.', 'error');
+        // סינון לפי סטטוס
+        if (statusFilter !== 'all' && orderStatus !== statusFilter) {
+            return false;
         }
-    } else {
-        showAlert('שגיאה ביצירת תעודת משלוח חדשה.', 'error');
-    }
-    hideLoader();
+
+        // סינון לפי סוג פעולה
+        if (actionTypeFilter !== 'all' && orderActionType !== actionTypeFilter) {
+            return false;
+        }
+
+        // סינון לפי סוכן מטפל
+        if (agentFilter !== 'all' && orderAgent !== agentFilter) {
+            return false;
+        }
+
+        // סינון לפי טקסט חיפוש
+        if (searchTerm && !orderText.includes(searchTerm)) {
+            return false;
+        }
+
+        // סינון לפי "הצג הזמנות שנסגרו"
+        if (!showClosed && orderStatus === 'סגור') {
+            return false;
+        }
+
+        return true;
+    });
+
+    renderOrdersTable(filteredOrders);
 }
 
-
-// --- Scroll to Top Button ---
-window.onscroll = function() { scrollFunction() };
-function scrollFunction() {
-    const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
-    if (document.body.scrollTop > 200 || document.documentElement.scrollTop > 200) {
-        scrollToTopBtn.classList.remove('opacity-0', 'pointer-events-none');
+/**
+ * מציג את טבלת ההזמנות עם הנתונים המסוננים.
+ * @param {Array<Object>} orders מערך ההזמנות להצגה.
+ */
+function renderOrdersTable(orders) {
+    const tableBody = document.getElementById('orders-table-body');
+    if (!tableBody) return;
+    tableBody.innerHTML = '';
+    
+    if (orders.length === 0) {
+        document.getElementById('no-orders-message').classList.remove('hidden');
     } else {
-        scrollToTopBtn.classList.add('opacity-0', 'pointer-events-none');
+        document.getElementById('no-orders-message').classList.add('hidden');
+        orders.forEach(order => {
+            const row = document.createElement('tr');
+            row.className = 'border-b hover:bg-gray-50 dark:hover:bg-gray-700';
+            
+            // עיצוב שורות על בסיס סטטוס
+            if (order['סטטוס'] === 'סגור') {
+                row.classList.add('bg-gray-100', 'text-gray-500', 'line-through');
+            } else if (order['סטטוס'] === 'דחוף') {
+                row.classList.add('bg-red-100', 'text-red-700', 'font-semibold');
+            }
+
+            row.innerHTML = `
+                <td class="p-3 text-sm">${order['מספר מסמך']}</td>
+                <td class="p-3 text-sm">${order['שם לקוח']}</td>
+                <td class="p-3 text-sm">${order['כתובת']}</td>
+                <td class="p-3 text-sm">${order['תאריך יצירה']}</td>
+                <td class="p-3 text-sm">${order['סוג פעולה']}</td>
+                <td class="p-3 text-sm">${order['סטטוס']}</td>
+                <td class="p-3 text-sm">${order['סוכן מטפל']}</td>
+                <td class="p-3 text-sm flex space-x-2">
+                    <button onclick="handleOrderAction('${order['מספר מסמך']}', 'update')" class="text-blue-500 hover:text-blue-700">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="handleOrderAction('${order['מספר מסמך']}', 'move')" class="text-green-500 hover:text-green-700">
+                        <i class="fas fa-truck"></i>
+                    </button>
+                </td>
+            `;
+            tableBody.appendChild(row);
+        });
     }
 }
+
+// --- אירועים ופונקציות עזר ---
+
+/**
+ * מטפל בפעולות שבוצעו על הזמנות.
+ * @param {string} docId מזהה המסמך.
+ * @param {string} action סוג הפעולה ('update' או 'move').
+ */
+async function handleOrderAction(docId, action) {
+    if (action === 'update') {
+        // פתיחת חלון קופץ לעדכון
+        const newStatus = prompt('הזן סטטוס חדש עבור הזמנה זו:');
+        if (newStatus) {
+            showLoader();
+            try {
+                await postData({
+                    action: 'updateStatus',
+                    docId: docId,
+                    newStatus: newStatus
+                });
+                showMessageBox('הסטטוס עודכן בהצלחה!', 'success');
+                // רענון הנתונים
+                await loadAllData();
+            } catch (error) {
+                console.error('Failed to update status:', error);
+                showMessageBox('שגיאה בעדכון הסטטוס.', 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+    } else if (action === 'move') {
+        // אישור העברת הזמנה
+        const confirmation = confirm('האם אתה בטוח שברצונך להעביר הזמנה זו לגיליון "DeliveryNotes"?');
+        if (confirmation) {
+            showLoader();
+            try {
+                await postData({
+                    action: 'moveOrderToDelivery',
+                    orderId: docId
+                });
+                showMessageBox('הזמנה הועברה בהצלחה לגיליון משלוחים!', 'success');
+                // רענון הנתונים
+                await loadAllData();
+            } catch (error) {
+                console.error('Failed to move order:', error);
+                showMessageBox('שגיאה בהעברת ההזמנה.', 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+    }
+}
+
+/**
+ * מאפשר מיון של טבלאות.
+ * @param {string} tableId מזהה הטבלה.
+ * @param {number} n אינדקס העמודה למיון.
+ */
+function sortTable(tableId, n) {
+    let table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+    table = document.getElementById(tableId);
+    switching = true;
+    dir = "asc"; // הגדרת כיוון המיון לראשונה כעולה
+
+    while (switching) {
+        switching = false;
+        rows = table.rows;
+
+        // לולאה על כל השורות בטבלה (מלבד הכותרות)
+        for (i = 1; i < (rows.length - 1); i++) {
+            shouldSwitch = false;
+            x = rows[i].getElementsByTagName("TD")[n];
+            y = rows[i + 1].getElementsByTagName("TD")[n];
+
+            // בדיקת התוכן וקביעת אם צריך להחליף את השורות
+            if (dir === "asc") {
+                if (x.innerHTML.toLowerCase() > y.innerHTML.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
+            } else if (dir === "desc") {
+                if (x.innerHTML.toLowerCase() < y.innerHTML.toLowerCase()) {
+                    shouldSwitch = true;
+                    break;
+                }
+            }
+        }
+        if (shouldSwitch) {
+            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+            switching = true;
+            switchcount++;
+        } else {
+            // אם לא בוצעו החלפות והכיוון הוא עולה, שנה אותו ליורד והפעל שוב
+            if (switchcount === 0 && dir === "asc") {
+                dir = "desc";
+                switching = true;
+            }
+        }
+    }
+}
+
+/**
+ * חוזר לראש הדף.
+ */
 function scrollToTop() {
     window.scrollTo({
         top: 0,
@@ -322,7 +425,119 @@ function scrollToTop() {
     });
 }
 
-// Initial load and setup
+/**
+ * מעדכן את מצב כפתור "חזור למעלה" על פי מיקום הגלילה.
+ */
+window.onscroll = function() {
+    const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
+    if (document.body.scrollTop > 200 || document.documentElement.scrollTop > 200) {
+        scrollToTopBtn.style.display = "block";
+    } else {
+        scrollToTopBtn.style.display = "none";
+    }
+};
+
+// --- פונקציות נוספות מהקובץ המקורי ---
+
+function initializeTheme() {
+    // פונקציה זו יכולה לטפל בנושאים של ערכת נושא (Theme)
+}
+
+function updateDashboardAndTables() {
+    // עדכון טבלת ההזמנות
+    filterTable();
+
+    // קריאה לפונקציית עדכון ה-KPIs והגרפים
+    updateKpisAndCharts();
+}
+
+/**
+ * מאחזר רשימה של כל הסוכנים הייחודיים מתוך נתוני ההזמנות.
+ * @returns {Array<string>} מערך של שמות סוכנים ייחודיים.
+ */
+function getUniqueAgents() {
+    const agents = allOrders.map(order => order['סוכן מטפל']);
+    return [...new Set(agents)].filter(agent => agent); // מסיר כפילויות וערכים ריקים
+}
+
+/**
+ * עדכון הגרפים ולוח המחוונים (Dashboard) על בסיס הנתונים המעודכנים.
+ */
+function updateKpisAndCharts() {
+    const kpiData = {
+        totalOrders: allOrders.length + allDeliveryNotes.length,
+        openOrders: allOrders.filter(o => o['סטטוס'] === 'פתוח').length,
+        inProgressOrders: allOrders.filter(o => o['סטטוס'] === 'בתהליך').length,
+        closedOrders: allDeliveryNotes.length
+    };
+    
+    // עדכון תיבות ה-KPI ב-HTML
+    document.getElementById('total-orders-kpi').textContent = kpiData.totalOrders;
+    document.getElementById('open-orders-kpi').textContent = kpiData.openOrders;
+    document.getElementById('in-progress-orders-kpi').textContent = kpiData.inProgressOrders;
+    document.getElementById('closed-orders-kpi').textContent = kpiData.closedOrders;
+
+    // עדכון הגרפים
+    // (הנחה שפונקציות init/updateCharts קיימות ומוכנות לשימוש)
+    initCharts();
+}
+
+/**
+ * מאתחל את כל הגרפים בדף.
+ */
+function initCharts() {
+    // דוגמה לאתחול גרף אחד:
+    const ctxTotal = document.getElementById('totalOrdersChart').getContext('2d');
+    if (totalOrdersChart) {
+        totalOrdersChart.destroy();
+    }
+    totalOrdersChart = new Chart(ctxTotal, {
+        type: 'bar',
+        data: {
+            labels: ['הזמנות פתוחות', 'הזמנות שנסגרו'],
+            datasets: [{
+                label: 'מספר הזמנות',
+                data: [
+                    allOrders.filter(o => o['סטטוס'] !== 'סגור').length,
+                    allDeliveryNotes.length
+                ],
+                backgroundColor: ['#2196F3', '#4CAF50'],
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // יש להוסיף כאן אתחול לגרפים נוספים כמו newVsClosedChart, actionTypeChart וכו'.
+}
+
+/**
+ * פונקציה לעדכון ה-UI לאחר שינוי.
+ * יש לרענן את לוחות המחוונים והטבלאות.
+ */
+function updateUiAfterChange() {
+    // עדכון הטבלה
+    filterTable(); 
+    // עדכון ה-KPIs והגרפים
+    updateKpisAndCharts();
+}
+
+// --- אירועים ---
 document.addEventListener('DOMContentLoaded', async () => {
-    await fetchDocuments();
+    initializeTheme();
+    await loadAllData();
 });
+
+// הפעלת פונקציות סינון ואיפוס כשמשתמשים משנים את הקלט
+document.getElementById('search-input').addEventListener('input', filterTable);
+document.getElementById('filter-status-select').addEventListener('change', filterTable);
+document.getElementById('filter-action-type-select').addEventListener('change', filterTable);
+document.getElementById('filter-agent-select').addEventListener('change', filterTable);
+document.getElementById('show-closed-orders').addEventListener('change', filterTable);
+
