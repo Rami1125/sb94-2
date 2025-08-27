@@ -1,7 +1,7 @@
 // קובץ JavaScript להתממשקות עם Google Apps Script API
 
 // ⚠️ עדכן את ה-URL הזה עם ה-URL האמיתי של הפריסה החדשה של יישום האינטרנט של Google Apps Script.
-const SCRIPT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwx_RT2pXdUyirOrCc-EiNx-oGO5zRwYoOWslFe9KVxQW-cpWlbF-WxOtsxcNqmFdBpCw/exec';
+const SCRIPT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxiS3wXwXCyh8xM1EdTiwXy0T-UyBRQgfrnRRis531lTxmgtJIGawfsPeetX5nVJW3V/exec';
 
 // URL של סקריפט Apps Script נפרד לרישום הודעות WhatsApp
 const WHATSAPP_LOG_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx_Q8-t3tT3qG6-E9bF0-R9-j0t4t6s-x3t3y/exec';
@@ -22,10 +22,11 @@ async function loadAllData() {
     showLoader();
     try {
         const ordersData = await fetchData({ action: 'readData', sheet: 'Orders' });
-        allOrders = ordersData;
-        
         const deliveryNotesData = await fetchData({ action: 'readData', sheet: 'DeliveryNotes' });
-        allDeliveryNotes = deliveryNotesData;
+        
+        // Ensure data is an array before assigning
+        allOrders = Array.isArray(ordersData) ? ordersData : [];
+        allDeliveryNotes = Array.isArray(deliveryNotesData) ? deliveryNotesData : [];
 
         // שילוב נתונים לטבלת הלקוחות וקיזוז כפילויות
         customerData = combineAndFilterCustomers(allOrders, allDeliveryNotes);
@@ -90,21 +91,22 @@ async function postData(data) {
  * @returns {Array<Object>} מערך של אובייקטים של לקוחות ייחודיים.
  */
 function combineAndFilterCustomers(orders, deliveryNotes) {
-    const allEntries = [...orders, ...deliveryNotes];
+    // Add a check to ensure inputs are arrays
+    const allEntries = [...(Array.isArray(orders) ? orders : []), ...(Array.isArray(deliveryNotes) ? deliveryNotes : [])];
     const customersMap = new Map();
 
     allEntries.forEach(entry => {
-        const customerPhone = entry['טלפון'].trim();
+        const customerPhone = entry['טלפון']?.trim();
+        if (!customerPhone) return; // Skip if no phone number exists
+
         if (customersMap.has(customerPhone)) {
-            // עדכון נתוני הלקוח הקיים
             const existingCustomer = customersMap.get(customerPhone);
             existingCustomer.totalOrders++;
-            existingCustomer.lastAddress = entry['כתובת'].trim();
+            existingCustomer.lastAddress = entry['כתובת']?.trim() || existingCustomer.lastAddress;
         } else {
-            // יצירת אובייקט לקוח חדש
             customersMap.set(customerPhone, {
-                name: entry['שם לקוח'].trim(),
-                lastAddress: entry['כתובת'].trim(),
+                name: entry['שם לקוח']?.trim() || 'שם לא ידוע',
+                lastAddress: entry['כתובת']?.trim() || 'כתובת לא ידועה',
                 phone: customerPhone,
                 totalOrders: 1
             });
@@ -370,7 +372,7 @@ function showCustomerHistoryModal(phone) {
         return;
     }
 
-    const allCustomerOrders = [...allOrders, ...allDeliveryNotes].filter(o => o['טלפון'].trim() === phone);
+    const allCustomerOrders = [...allOrders, ...allDeliveryNotes].filter(o => o['טלפון']?.trim() === phone);
     allCustomerOrders.sort((a, b) => new Date(b['תאריך יצירה']) - new Date(a['תאריך יצירה']));
 
     const detailsName = document.getElementById('customer-details-name');
@@ -499,5 +501,3 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
         hideLoader();
     }
 });
-
- 
